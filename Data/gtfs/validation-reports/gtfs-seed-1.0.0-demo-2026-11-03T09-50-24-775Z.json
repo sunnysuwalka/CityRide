@@ -1,0 +1,26 @@
+{
+  "started_at": "2026-11-03T09:50:24.752Z",
+  "status": "dry-run-passed",
+  "city": "Bhilwara",
+  "database": "CityRide",
+  "source_zip": "Data\\gtfs\\source\\Bhilwara_GTFS_Demo_V1.zip",
+  "source_sha256": "592f6f92280f08802568cd6879f1f70cf7c90b65935583b7bee89af9098e14ef",
+  "feed_version": "1.0.0-demo",
+  "source_counts": {
+    "agencies": 1,
+    "stops": 22,
+    "routes": 15,
+    "trips": 60,
+    "stopTimes": 230,
+    "serviceCalendars": 1,
+    "serviceExceptions": 0,
+    "shapes": 15,
+    "shapePoints": 147,
+    "fareAttributes": 15,
+    "fareRules": 15
+  },
+  "database_counts": {},
+  "warnings": [],
+  "errors": [],
+  "finished_at": "2026-11-03T09:50:24.775Z"
+}
