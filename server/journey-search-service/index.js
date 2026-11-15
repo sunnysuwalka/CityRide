@@ -551,9 +551,9 @@ app.get("/api/v1/journeys/search", async (req, res) => {
 
         if (validDepartures.length === 0) {
 
-            return res.status(200).json({
-                success: true,
-                message: "No journeys found",
+            return res.status(404).json({
+                success: false,
+                message: "We couldn't find any journeys matching your search. Please try different travel details.",
                 journeys: [],
                 totalResults: 0
             });
@@ -934,20 +934,9 @@ app.get("/api/v1/journeys/search", async (req, res) => {
 
                 };
 
-            })
-
-            // Remove invalid results.
-
-            .filter(Boolean)
-
-            // Sort by journey duration.
-
-            .sort((a, b) =>
+            }).filter(Boolean).sort((a, b) =>
                 a.durationSeconds - b.durationSeconds
             );
-
-
-        // STEP 11: Return response.
 
         return res.status(200).json({
             success: true,
@@ -993,14 +982,17 @@ app.get("/api/v1/stops", async (req, res) => {
             })
         }
 
-        const stop_names = stops.map((item) =>
-            item.stop_name.replace(/\s*\(Demo Stop\)/gi, "").trim()
-        );
+        const FinalStops = stops.map((item) => ({
+    ...item.toObject(),
+    stop_name: item.stop_name
+        .replace(/\s*\*{0,3}\(?Demo Stop\)?\*{0,3}/gi, "")
+        .trim()
+}));
 
         return res.status(200).json({
             success: true,
             message: "Stops fetched successfully",
-            stops: stop_names
+            stops: FinalStops
         });
 
     } catch (err) {

@@ -6,8 +6,10 @@ import lockuphorizontalprimary from "./assets/cityride-logo-kit/cityride-logo-ki
 import BackgroundImage from "./assets/images/Modern Blue Electric Bus Boulevard.png";
 
 import JourneyCard from "./components/JourneyCard";
+import EmptyJourneys from "./components/EmptyJourneys";
 
 import { FaLeaf, FaArrowRightArrowLeft } from "react-icons/fa6";
+import SearchingJourneys from "./components/SearchingJourneys";
 
 const API_BASE = import.meta.env.VITE_BASE_URL || "http://localhost:5001/api/v1";
 
@@ -31,7 +33,10 @@ const App = () => {
   const [Time, setTime] = useState("");
 
   const [Stops, setStops] = useState([])
-  const [AvailableTrips, setAvailableTrips] = useState([])
+  const [AvailableTrips, setAvailableTrips] = useState(null)
+
+  const [openBoardingSuggestions, setOpenBoardingSuggestions] = useState(false)
+  const [openDestinationSuggestions, setopenDestinationSuggestions] = useState(false)
 
   useEffect(() => {
 
@@ -80,9 +85,10 @@ const App = () => {
     const pad = (num) => String(num).padStart(2, "0");
 
     return hrs > 0
-        ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}`
-        : `${pad(mins)}:${pad(secs)}`;
-};
+      ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}`
+      : `${pad(mins)}:${pad(secs)}`;
+  };
+
 
 
   const SearchJourney = async () => {
@@ -97,8 +103,12 @@ const App = () => {
       return;
     }
 
+    const BoardingCode = Stops.find(item=> item.stop_name === Boarding)?.stop_id
+    const DestinationCode = Stops.find(item=> item.stop_name === Destination)?.stop_id
+
     setError("")
     setNotice("")
+    setAvailableTrips(null)
 
     setIsLoading(true);
 
@@ -107,8 +117,8 @@ const App = () => {
         `${API_BASE}/journeys/search`,
         {
           params: {
-            fromStopId: Boarding,
-            toStopId: Destination,
+            fromStopId: BoardingCode,
+            toStopId: DestinationCode,
             date: journeyDate,
             after: Time || undefined
           }
@@ -116,6 +126,11 @@ const App = () => {
       );
 
       console.log("Journey Results:", response.data);
+
+      if(!Array.isArray(response.data.data.journeys)){
+        setError("Something went wrong on our end. Please try again in a moment.");
+        return;
+      }
 
       const data = await response.data.data.journeys
 
@@ -134,7 +149,22 @@ const App = () => {
     }
   };
 
+  const filterStops = (stops,searchValue)=>{
+    const search = searchValue.trim().toLowerCase();
 
+    return stops.filter(item=>item.stop_name.toLowerCase().includes(search))
+    .sort((a,b)=>{
+      const aStarts = a.stop_name.toLowerCase().startsWith(search);
+      const bStarts = b.stop_name.toLowerCase().startsWith(search);
+
+      return Number(bStarts) - Number(aStarts);
+    });
+  }
+
+  const filteredBoardingStops = filterStops(Stops,Boarding);
+  const filteredDestinationStops = filterStops(Stops, Destination)
+
+  
 
   return (
     <main className="h-screen">
@@ -199,7 +229,7 @@ const App = () => {
 
         <div className="h-screen grid grid-rows-[auto_1fr]" >
 
-          <div className="h-fit p-3 w-full border relative overflow-hidden">
+          <div className="h-fit p-3 w-full border relative overflow-y-visible">
 
             <h1 className="font-sora text-[2.5rem] font-semibold text-primary">
               Where to Go?
@@ -226,10 +256,29 @@ const App = () => {
                   type="text"
                   name="Boarding"
                   value={Boarding}
-                  onChange={(e) => setBoarding(e.target.value)}
+                  onChange={(e) => {
+                    setBoarding(e.target.value);
+                    if (e.target.value) {
+                      setOpenBoardingSuggestions(true);
+                    } else {
+                      setOpenBoardingSuggestions(false);
+                    }
+                  }}
                   className="min-w-0 w-full appearance-none border-0 outline-none h-full px-2 bg-transparent rounded-md font-inter text-sm placeholder:text-black placeholder:font-extralight"
                   placeholder="Select Pickup"
                 />
+
+                {openBoardingSuggestions &&
+
+                  <div className="absolute z-50 top-12 left-0 min-h-fit max-h-[30vh] bg-surface-light border shadow-sm rounded-md p-3 overflow-y-scroll" >
+                    {filteredBoardingStops.map((item, key) => (
+                      <button onClick={() => { setBoarding(item.stop_name), setOpenBoardingSuggestions(false) }} className="py-1 px-2 my-1 bg-surface-light w-full text-left block border border-neutral-border" key={key} >{item.stop_name}</button>
+                    ))}
+                  </div>
+
+                }
+
+
 
               </div>
 
@@ -262,10 +311,28 @@ const App = () => {
                   type="text"
                   name="Destination"
                   value={Destination}
-                  onChange={(e) => setDestination(e.target.value)}
+                  onChange={(e) => {
+                    setDestination(e.target.value);
+                    if (e.target.value) {
+                      setopenDestinationSuggestions(true)
+                    }
+                    else {
+                      setopenDestinationSuggestions(false)
+                    }
+                  }}
                   className="min-w-0 w-full appearance-none border-0 outline-none h-full px-2 bg-transparent rounded-md font-inter text-sm placeholder:text-black placeholder:font-extralight"
                   placeholder="Search Destination"
                 />
+
+                {openDestinationSuggestions &&
+
+                  <div className="absolute z-50 top-12 left-0 min-h-fit max-h-[30vh] bg-surface-light border shadow-sm rounded-md p-3 overflow-y-scroll" >
+                    {filteredDestinationStops.map((item, key) => (
+                      <button onClick={() => { setDestination(item.stop_name), setopenDestinationSuggestions(false) }} className="py-1 px-2 my-1 bg-surface-light w-full text-left block border border-neutral-border" key={key} >{item.stop_name}</button>
+                    ))}
+                  </div>
+
+                }
 
               </div>
 
@@ -342,7 +409,7 @@ const App = () => {
           </div>
 
           <div className="h-full overflow-y-scroll px-6 pt-2" >
-            {AvailableTrips && AvailableTrips.length > 0 ? (
+            {AvailableTrips && AvailableTrips?.length > 0 ? (
               AvailableTrips.map((item, index) => (
                 <JourneyCard
                   key={item.tripId || index}
@@ -356,9 +423,8 @@ const App = () => {
                   className="my-2"
                 />
               ))
-            ) : (
-              <p>No journeys available.</p>
-            )}
+            ) : isLoading ? <SearchingJourneys /> : AvailableTrips?.length === 0 ? <EmptyJourneys variant="noResults"/> : <EmptyJourneys variant="idle"/>
+          }
           </div>
 
         </div>
