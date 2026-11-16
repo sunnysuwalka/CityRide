@@ -150,12 +150,12 @@ const App = () => {
   };
 
   const filterStops = (stops,searchValue)=>{
-    const search = searchValue.trim().toLowerCase();
+    const search = searchValue?.trim().toLowerCase();
 
-    return stops.filter(item=>item.stop_name.toLowerCase().includes(search))
+    return stops.filter(item=>item.stop_name?.toLowerCase().includes(search))
     .sort((a,b)=>{
-      const aStarts = a.stop_name.toLowerCase().startsWith(search);
-      const bStarts = b.stop_name.toLowerCase().startsWith(search);
+      const aStarts = a.stop_name?.toLowerCase().startsWith(search);
+      const bStarts = b.stop_name?.toLowerCase().startsWith(search);
 
       return Number(bStarts) - Number(aStarts);
     });
