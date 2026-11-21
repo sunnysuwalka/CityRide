@@ -1,6 +1,8 @@
+
 import "dotenv/config";
+
 import express from "express";
-import cors from "cors"
+import cors from "cors";
 import mongoose from "mongoose";
 
 // Models
@@ -12,43 +14,105 @@ import { GtfsFeedState } from "./models/GtfsFeedState.js";
 import { ServiceCalendar } from "./models/ServiceCalendar.js";
 import { ServiceException } from "./models/ServiceException.js";
 
+// ============================================
+// 1. APPLICATION CONFIGURATION
+// ============================================
+
 const app = express();
 const PORT = process.env.PORT || 5001;
 
 app.use(express.json());
+
 app.use(cors({
     origin: true,
     credentials: true
 }));
 
 // ============================================
-// 1. DATABASE CONNECTION
+// 2. STANDARD API RESPONSE HELPERS
 // ============================================
 
-const connectDB = async () => {
-    try {
-        const conn = await mongoose.connect(process.env.MONGODB_URI);
+const sendSuccess = (
+    res,
+    {
+        status = 200,
+        message = "Request successful",
+        data = null
+    } = {}
+) => {
+    return res.status(status).json({
+        success: true,
+        message,
+        data,
+        error: null
+    });
+};
 
-        console.log(`MongoDB Connected: ${conn.connection.host}`);
-
-    } catch (error) {
-        console.error("MongoDB Connection Error:", error.message);
-        throw error;
-    }
+const sendError = (
+    res,
+    {
+        status = 500,
+        message = "Internal server error",
+        code = "INTERNAL_SERVER_ERROR",
+        details = null
+    } = {}
+) => {
+    return res.status(status).json({
+        success: false,
+        message,
+        data: null,
+        error: {
+            code,
+            details
+        }
+    });
 };
 
 // ============================================
-// 2. QUERY VALIDATION
+// 3. CUSTOM API ERROR
 // ============================================
 
-const ValidateQuery = (query) => {
+class ApiError extends Error {
+    constructor(status, code, message, details = null) {
+        super(message);
 
-    if (!query || typeof query !== "object" || Array.isArray(query)) {
-        return {
-            success: false,
-            message: "Malformed query parameters"
-        };
+        this.name = "ApiError";
+        this.status = status;
+        this.code = code;
+        this.details = details;
     }
+}
+
+// ============================================
+// 4. ASYNC ERROR HANDLER
+// ============================================
+
+const asyncHandler = (handler) => {
+    return (req, res, next) => {
+        Promise.resolve(handler(req, res, next))
+            .catch(next);
+    };
+};
+
+// ============================================
+// 5. DATABASE CONNECTION
+// ============================================
+
+const connectDB = async () => {
+    const conn = await mongoose.connect(
+        process.env.MONGODB_URI
+    );
+
+    console.log(
+        `MongoDB Connected: ${conn.connection.host}`
+    );
+};
+
+// ============================================
+// 6. QUERY VALIDATION
+// ============================================
+
+const validateQuery = (query) => {
 
     const allowedParameters = new Set([
         "fromStopId",
@@ -57,129 +121,138 @@ const ValidateQuery = (query) => {
         "after"
     ]);
 
-    // Reject unexpected parameters, arrays and nested objects.
+    if (
+        !query ||
+        typeof query !== "object" ||
+        Array.isArray(query)
+    ) {
+        throw new ApiError(
+            400,
+            "INVALID_QUERY",
+            "Malformed query parameters"
+        );
+    }
+
     for (const [key, value] of Object.entries(query)) {
 
         if (!allowedParameters.has(key)) {
-            return {
-                success: false,
-                message: `Unexpected query parameter: ${key}`
-            };
+            throw new ApiError(
+                400,
+                "UNEXPECTED_PARAMETER",
+                `Unexpected query parameter: ${key}`
+            );
         }
 
         if (typeof value !== "string") {
-            return {
-                success: false,
-                message: `Invalid query parameter: ${key} must be supplied once as a string`
-            };
+            throw new ApiError(
+                400,
+                "INVALID_PARAMETER",
+                `${key} must be supplied once as a string`
+            );
         }
     }
 
-    const { fromStopId, toStopId, date } = query;
-
-    // after is optional.
-    const after = query.after === undefined
-        ? "00:00"
-        : query.after;
+    const {
+        fromStopId,
+        toStopId,
+        date
+    } = query;
 
     if (
         fromStopId === undefined ||
         toStopId === undefined ||
         date === undefined
     ) {
-        return {
-            success: false,
-            message: "Missing required parameters",
-            required: [
-                "fromStopId",
-                "toStopId",
-                "date"
-            ],
-            optional: {
-                after: "Defaults to 00:00 when omitted"
+        throw new ApiError(
+            400,
+            "MISSING_PARAMETERS",
+            "Missing required query parameters",
+            {
+                required: [
+                    "fromStopId",
+                    "toStopId",
+                    "date"
+                ],
+                optional: {
+                    after: "Defaults to 00:00"
+                }
             }
-        };
+        );
     }
 
-    // Trim stop IDs.
-    const normalizedFromStopId = fromStopId.trim();
-    const normalizedToStopId = toStopId.trim();
+    const from = fromStopId.trim();
+    const to = toStopId.trim();
 
-    // Reject empty or whitespace-only stop IDs.
-    if (!normalizedFromStopId || !normalizedToStopId) {
-        return {
-            success: false,
-            message: "Stop IDs cannot be empty or whitespace-only"
-        };
+    if (!from || !to) {
+        throw new ApiError(
+            400,
+            "EMPTY_STOP_ID",
+            "Stop IDs cannot be empty"
+        );
     }
 
-    // Departure and arrival cannot be the same.
-    if (normalizedFromStopId === normalizedToStopId) {
-        return {
-            success: false,
-            message: "Departure and arrival stops cannot be the same"
-        };
+    if (from === to) {
+        throw new ApiError(
+            400,
+            "SAME_STOP",
+            "Departure and arrival stops cannot be the same"
+        );
     }
 
-    // Validate actual calendar date.
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        return {
-            success: false,
-            message: "Invalid date format. Use YYYY-MM-DD"
-        };
+        throw new ApiError(
+            400,
+            "INVALID_DATE_FORMAT",
+            "Invalid date format. Use YYYY-MM-DD"
+        );
     }
 
-    const parsedDate = new Date(`${date}T00:00:00.000Z`);
+    const parsedDate = new Date(
+        `${date}T00:00:00.000Z`
+    );
 
     if (
         Number.isNaN(parsedDate.getTime()) ||
         parsedDate.toISOString().slice(0, 10) !== date
     ) {
-        return {
-            success: false,
-            message: "Invalid calendar date"
-        };
+        throw new ApiError(
+            400,
+            "INVALID_DATE",
+            "Invalid calendar date"
+        );
     }
 
-    // Validate requested departure time.
-    // Explicitly empty after values are invalid.
+    const after = query.after === undefined
+        ? "00:00"
+        : query.after;
+
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(after)) {
-        return {
-            success: false,
-            message: "Invalid time format. Use HH:mm"
-        };
+        throw new ApiError(
+            400,
+            "INVALID_TIME",
+            "Invalid time format. Use HH:mm"
+        );
     }
 
     return {
-        success: true,
-        data: {
-            fromStopId: normalizedFromStopId,
-            toStopId: normalizedToStopId,
-            date,
-            after
-        }
+        fromStopId: from,
+        toStopId: to,
+        date,
+        after
     };
 };
 
 // ============================================
-// 3. TIME HELPERS
+// 7. TIME HELPERS
 // ============================================
 
-// Convert HH:mm into seconds.
-
 const timeToSeconds = (time) => {
-
     const [hours, minutes] = time.split(":").map(Number);
 
     return (hours * 3600) + (minutes * 60);
 };
 
-
-// Convert GTFS HH:mm:ss into seconds.
-//
-// GTFS allows times greater than 24:00:00.
-// Example: 25:15:00 represents 1:15 AM
-// on the following calendar day within the same service day.
+// Supports GTFS times beyond 24 hours.
 
 const gtfsTimeToSeconds = (time) => {
 
@@ -190,38 +263,34 @@ const gtfsTimeToSeconds = (time) => {
         return null;
     }
 
-    const [hours, minutes, seconds] = time.split(":").map(Number);
+    const [hours, minutes, seconds] = time
+        .split(":")
+        .map(Number);
 
     if (
         !Number.isSafeInteger(hours) ||
         !Number.isInteger(minutes) ||
         !Number.isInteger(seconds) ||
-        hours < 0 ||
-        minutes < 0 ||
         minutes > 59 ||
-        seconds < 0 ||
         seconds > 59
     ) {
         return null;
     }
 
-    const totalSeconds =
-        (hours * 3600) +
-        (minutes * 60) +
+    const total =
+        hours * 3600 +
+        minutes * 60 +
         seconds;
 
-    return Number.isSafeInteger(totalSeconds)
-        ? totalSeconds
+    return Number.isSafeInteger(total)
+        ? total
         : null;
 };
 
-
-// Get StopTime seconds.
-//
-// Prefer precomputed seconds.
-// If unavailable or invalid, parse the GTFS time string.
-
-const getStopTimeSeconds = (secondsValue, timeValue) => {
+const getStopTimeSeconds = (
+    secondsValue,
+    timeValue
+) => {
 
     if (
         secondsValue === undefined ||
@@ -231,33 +300,27 @@ const getStopTimeSeconds = (secondsValue, timeValue) => {
         return gtfsTimeToSeconds(timeValue);
     }
 
-    const parsedSeconds =
+    const parsed =
         typeof secondsValue === "number"
             ? secondsValue
-            : typeof secondsValue === "string" && /^\d+$/.test(secondsValue)
+            : typeof secondsValue === "string" &&
+              /^\d+$/.test(secondsValue)
                 ? Number(secondsValue)
                 : NaN;
 
     if (
-        Number.isSafeInteger(parsedSeconds) &&
-        parsedSeconds >= 0
+        Number.isSafeInteger(parsed) &&
+        parsed >= 0
     ) {
-        return parsedSeconds;
+        return parsed;
     }
 
     return gtfsTimeToSeconds(timeValue);
 };
 
 // ============================================
-// 4. GTFS SERVICE CALENDAR VALIDATION
+// 8. GTFS VALUE PARSERS
 // ============================================
-
-// Validate GTFS calendar weekday fields.
-//
-// Supports:
-// true / false
-// 1 / 0
-// "1" / "0"
 
 const parseGtfsFlag = (value) => {
 
@@ -280,14 +343,11 @@ const parseGtfsFlag = (value) => {
     return null;
 };
 
-
-// Parse an integer stored as a number or digit-only string.
-
 const parseGtfsInteger = (value) => {
 
     if (
         typeof value === "number" &&
-        Number.isInteger(value)
+        Number.isSafeInteger(value)
     ) {
         return value;
     }
@@ -306,12 +366,11 @@ const parseGtfsInteger = (value) => {
     return null;
 };
 
-
 // ============================================
-// SERVICE ACTIVE VALIDATION
+// 9. GTFS SERVICE VALIDATION
 // ============================================
 
-const IsServiceActive = (
+const isServiceActive = (
     serviceId,
     date,
     calendars,
@@ -322,31 +381,17 @@ const IsServiceActive = (
         item => item.service_id === serviceId
     );
 
-    // GTFS calendar_dates exception_type:
-    //
-    // 1 = Service added
-    // 2 = Service removed
-
     if (exception) {
 
-        const exceptionType = parseGtfsInteger(
+        const type = parseGtfsInteger(
             exception.exception_type
         );
 
-        if (exceptionType === 1) {
-            return true;
-        }
-
-        if (exceptionType === 2) {
-            return false;
-        }
-
-        // Unknown exception types are ignored.
-        // Fall back to the normal weekly calendar.
+        if (type === 1) return true;
+        if (type === 2) return false;
 
         console.warn(
-            `Ignoring unknown GTFS exception_type for service ${serviceId}:`,
-            exception.exception_type
+            `Unknown exception_type for service ${serviceId}`
         );
     }
 
@@ -354,16 +399,12 @@ const IsServiceActive = (
         item => item.service_id === serviceId
     );
 
-    if (!calendar) {
-        return false;
-    }
+    if (!calendar) return false;
 
     const gtfsDate = date.replaceAll("-", "");
 
     const startDate = String(calendar.start_date ?? "");
     const endDate = String(calendar.end_date ?? "");
-
-    // Validate calendar date boundaries.
 
     if (
         !/^\d{8}$/.test(startDate) ||
@@ -373,9 +414,6 @@ const IsServiceActive = (
     ) {
         return false;
     }
-
-    // Determine weekday in UTC.
-    // This avoids timezone shifts.
 
     const dayIndex = new Date(
         `${date}T00:00:00.000Z`
@@ -391,52 +429,27 @@ const IsServiceActive = (
         "saturday"
     ];
 
-    // Verify all weekday fields and their stored values.
-
-    const normalizedWeekdays = weekdays.map(
-        weekday => parseGtfsFlag(calendar[weekday])
+    const flags = weekdays.map(
+        day => parseGtfsFlag(calendar[day])
     );
 
-    if (
-        normalizedWeekdays.some(
-            value => value === null
-        )
-    ) {
+    if (flags.some(value => value === null)) {
+
         console.warn(
-            `Ignoring malformed weekday flags for GTFS service ${serviceId}`
+            `Malformed weekday flags for service ${serviceId}`
         );
 
         return false;
     }
 
-    return normalizedWeekdays[dayIndex] === true;
+    return flags[dayIndex] === true;
 };
 
-
 // ============================================
-// 5. PICKUP / DROP-OFF VALIDATION
+// 10. PICKUP / DROP-OFF VALIDATION
 // ============================================
-
-// GTFS pickup_type:
-//
-// 0 = Regular pickup
-// 1 = No pickup
-// 2 = Arrange by phone
-// 3 = Arrange with driver
-//
-// GTFS drop_off_type:
-//
-// 0 = Regular drop-off
-// 1 = No drop-off
-// 2 = Arrange by phone
-// 3 = Arrange with driver
-//
-// Types 2 and 3 are retained because they
-// represent services requiring arrangements.
 
 const isStopTimeActionAllowed = (value) => {
-
-    // GTFS default value is 0 when blank.
 
     if (
         value === undefined ||
@@ -446,59 +459,58 @@ const isStopTimeActionAllowed = (value) => {
         return true;
     }
 
-    const actionType = parseGtfsInteger(value);
+    const type = parseGtfsInteger(value);
 
     return (
-        actionType === 0 ||
-        actionType === 2 ||
-        actionType === 3
+        type === 0 ||
+        type === 2 ||
+        type === 3
     );
 };
 
 // ============================================
-// 6. JOURNEY SEARCH API
+// 11. ACTIVE FEED HELPER
 // ============================================
 
-app.get("/api/v1/journeys/search", async (req, res) => {
+const getActiveFeedVersion = async () => {
 
-    try {
+    const state = await GtfsFeedState
+        .findById("active")
+        .lean();
 
-        // STEP 1: Validate query parameters.
+    if (!state?.active_feed_version) {
+        throw new ApiError(
+            503,
+            "ACTIVE_FEED_UNAVAILABLE",
+            "No active GTFS feed is currently available"
+        );
+    }
 
-        const validation = ValidateQuery(req.query);
+    return state.active_feed_version;
+};
 
-        if (!validation.success) {
-            return res.status(400).json(validation);
-        }
+// ============================================
+// 12. JOURNEY SEARCH API
+// ============================================
+
+app.get(
+    "/api/v1/journeys/search",
+    asyncHandler(async (req, res) => {
+
+        // STEP 1: Validate parameters.
 
         const {
             fromStopId,
             toStopId,
             date,
             after
-        } = validation.data;
+        } = validateQuery(req.query);
 
+        // STEP 2: Active GTFS feed.
 
-        // STEP 2: Get active GTFS feed version.
+        const feedVersion = await getActiveFeedVersion();
 
-        const feedState = await GtfsFeedState.findById(
-            "active"
-        ).lean();
-
-        if (
-            !feedState ||
-            !feedState.active_feed_version
-        ) {
-            return res.status(503).json({
-                success: false,
-                message: "No active GTFS feed found"
-            });
-        }
-
-        const feedVersion = feedState.active_feed_version;
-
-
-        // STEP 3: Find departure and arrival stops.
+        // STEP 3: Fetch selected stops.
 
         const [from, to] = await Promise.all([
 
@@ -515,14 +527,14 @@ app.get("/api/v1/journeys/search", async (req, res) => {
         ]);
 
         if (!from || !to) {
-            return res.status(404).json({
-                success: false,
-                message: "Departure or arrival stop not found"
-            });
+            throw new ApiError(
+                404,
+                "STOP_NOT_FOUND",
+                "Departure or arrival stop not found"
+            );
         }
 
-
-        // STEP 4: Find departure StopTime records.
+        // STEP 4: Fetch departure records.
 
         const afterSeconds = timeToSeconds(after);
 
@@ -531,64 +543,54 @@ app.get("/api/v1/journeys/search", async (req, res) => {
             stop_id: fromStopId
         }).lean();
 
+        const validDepartures = departureStopTimes.filter(
+            item => {
 
-        // Filter departures by requested time.
+                const seconds = getStopTimeSeconds(
+                    item.departure_seconds,
+                    item.departure_time
+                );
 
-        const validDepartures = departureStopTimes.filter(item => {
-
-            const departureSeconds = getStopTimeSeconds(
-                item.departure_seconds,
-                item.departure_time
-            );
-
-            return (
-                departureSeconds !== null &&
-                departureSeconds >= afterSeconds
-            );
-
-        });
-
+                return (
+                    seconds !== null &&
+                    seconds >= afterSeconds
+                );
+            }
+        );
 
         if (validDepartures.length === 0) {
 
-            return res.status(404).json({
-                success: false,
-                message: "We couldn't find any journeys matching your search. Please try different travel details.",
-                journeys: [],
-                totalResults: 0
-            });
+            return sendSuccess(res, {
+                message: "No journeys found for the selected search criteria",
 
+                data: {
+                    fromStop: from,
+                    toStop: to,
+                    date,
+                    after,
+                    totalResults: 0,
+                    journeys: []
+                }
+            });
         }
 
-
-        // STEP 5: Find matching arrival StopTimes.
+        // STEP 5: Find arrival records.
 
         const candidateTripIds = [
             ...new Set(
-                validDepartures.map(
-                    item => item.trip_id
-                )
+                validDepartures.map(item => item.trip_id)
             )
         ];
 
         const arrivalStopTimes = await StopTime.find({
 
             feed_version: feedVersion,
-
             stop_id: toStopId,
+            trip_id: { $in: candidateTripIds }
 
-            trip_id: {
-                $in: candidateTripIds
-            }
-
-        }).sort({
-
-            stop_sequence: 1
-
-        }).lean();
-
-
-        // Group arrival records by trip ID.
+        })
+            .sort({ stop_sequence: 1 })
+            .lean();
 
         const arrivalsByTrip = new Map();
 
@@ -599,23 +601,13 @@ app.get("/api/v1/journeys/search", async (req, res) => {
             }
 
             arrivalsByTrip.get(arrival.trip_id).push(arrival);
-
         }
 
-
-        // STEP 6: Match departure and arrival sequence.
-        //
-        // Check:
-        // 1. Departure pickup_type.
-        // 2. Arrival drop_off_type.
-        // 3. Arrival stop_sequence > departure stop_sequence.
+        // STEP 6: Match valid direct journeys.
 
         const matchingJourneys = [];
 
         for (const departure of validDepartures) {
-
-            // Check whether passengers can board
-            // at the selected departure stop.
 
             if (
                 !isStopTimeActionAllowed(
@@ -625,10 +617,6 @@ app.get("/api/v1/journeys/search", async (req, res) => {
                 continue;
             }
 
-
-            const possibleArrivals =
-                arrivalsByTrip.get(departure.trip_id) || [];
-
             const departureSequence = Number(
                 departure.stop_sequence
             );
@@ -637,33 +625,21 @@ app.get("/api/v1/journeys/search", async (req, res) => {
                 continue;
             }
 
-
-            // Find the first later arrival where
-            // passengers are permitted to alight.
+            const possibleArrivals =
+                arrivalsByTrip.get(departure.trip_id) || [];
 
             const arrival = possibleArrivals.find(item => {
 
-                const arrivalSequence = Number(
-                    item.stop_sequence
-                );
+                const sequence = Number(item.stop_sequence);
 
                 return (
-                    Number.isFinite(arrivalSequence) &&
-                    arrivalSequence > departureSequence &&
-                    isStopTimeActionAllowed(
-                        item.drop_off_type
-                    )
+                    Number.isFinite(sequence) &&
+                    sequence > departureSequence &&
+                    isStopTimeActionAllowed(item.drop_off_type)
                 );
-
             });
 
-
-            if (!arrival) {
-                continue;
-            }
-
-
-            // Get departure and arrival seconds.
+            if (!arrival) continue;
 
             const departureSeconds = getStopTimeSeconds(
                 departure.departure_seconds,
@@ -675,9 +651,6 @@ app.get("/api/v1/journeys/search", async (req, res) => {
                 arrival.arrival_time
             );
 
-
-            // Validate journey times.
-
             if (
                 departureSeconds === null ||
                 arrivalSeconds === null ||
@@ -686,187 +659,240 @@ app.get("/api/v1/journeys/search", async (req, res) => {
                 continue;
             }
 
-
             matchingJourneys.push({
 
                 tripId: departure.trip_id,
-
                 departure,
-
                 arrival,
-
                 departureSeconds,
-
                 arrivalSeconds
 
             });
-
         }
-
 
         if (matchingJourneys.length === 0) {
 
-            return res.status(200).json({
-                success: true,
+            return sendSuccess(res, {
                 message: "No direct journeys found between these stops",
-                journeys: [],
-                totalResults: 0
-            });
 
+                data: {
+                    fromStop: from,
+                    toStop: to,
+                    date,
+                    after,
+                    totalResults: 0,
+                    journeys: []
+                }
+            });
         }
 
-
-        // STEP 7: Fetch matching trips.
+        // STEP 7: Fetch trips.
 
         const matchingTripIds = [
             ...new Set(
-                matchingJourneys.map(
-                    item => item.tripId
-                )
+                matchingJourneys.map(item => item.tripId)
             )
         ];
 
         const trips = await Trip.find({
 
             feed_version: feedVersion,
-
-            trip_id: {
-                $in: matchingTripIds
-            }
+            trip_id: { $in: matchingTripIds }
 
         }).lean();
 
-
-        // Create trip lookup map.
-
         const tripMap = new Map(
-            trips.map(
-                trip => [
-                    trip.trip_id,
-                    trip
-                ]
-            )
+            trips.map(trip => [trip.trip_id, trip])
         );
 
+        // ============================================
+        // STEP 7.1: FETCH ALL STOPS FOR MATCHING TRIPS
+        // ============================================
 
-        // STEP 8: Check service calendars and exceptions.
+        // Fetch every stop_time belonging to matching trips.
+
+        const allTripStopTimes = await StopTime.find({
+
+            feed_version: feedVersion,
+            trip_id: { $in: matchingTripIds }
+
+        }).lean();
+
+        // Collect all unique stop IDs.
+
+        const allStopIds = [
+            ...new Set(
+                allTripStopTimes.map(item => item.stop_id)
+            )
+        ];
+
+        // Fetch corresponding stop details.
+
+        const allStops = await Stop.find({
+
+            feed_version: feedVersion,
+            stop_id: { $in: allStopIds }
+
+        }).lean();
+
+        // Create stop lookup map.
+
+        const allStopMap = new Map(
+            allStops.map(stop => [
+                stop.stop_id,
+                stop
+            ])
+        );
+
+        // Group stop times by trip.
+
+        const tripStopTimesMap = new Map();
+
+        for (const item of allTripStopTimes) {
+
+            if (!tripStopTimesMap.has(item.trip_id)) {
+                tripStopTimesMap.set(item.trip_id, []);
+            }
+
+            tripStopTimesMap.get(item.trip_id).push(item);
+        }
+
+        // Sort all trip stops by stop_sequence.
+
+        for (const stopTimes of tripStopTimesMap.values()) {
+
+            stopTimes.sort(
+                (a, b) =>
+                    Number(a.stop_sequence) -
+                    Number(b.stop_sequence)
+            );
+        }
+
+        // STEP 8: Validate service calendars.
 
         const serviceIds = [
             ...new Set(
-                trips.map(
-                    trip => trip.service_id
-                )
+                trips.map(trip => trip.service_id)
             )
         ];
 
         const gtfsDate = date.replaceAll("-", "");
-
 
         const [calendars, exceptions] = await Promise.all([
 
             ServiceCalendar.find({
 
                 feed_version: feedVersion,
-
-                service_id: {
-                    $in: serviceIds
-                }
+                service_id: { $in: serviceIds }
 
             }).lean(),
-
 
             ServiceException.find({
 
                 feed_version: feedVersion,
-
                 date: gtfsDate,
-
-                service_id: {
-                    $in: serviceIds
-                }
+                service_id: { $in: serviceIds }
 
             }).lean()
 
         ]);
 
-
-        // Keep only trips operating on requested date.
-
-        const activeTrips = trips.filter(trip =>
-
-            IsServiceActive(
-                trip.service_id,
-                date,
-                calendars,
-                exceptions
-            )
-
-        );
-
-
         const activeTripIds = new Set(
-            activeTrips.map(
-                trip => trip.trip_id
-            )
+
+            trips
+                .filter(trip =>
+                    isServiceActive(
+                        trip.service_id,
+                        date,
+                        calendars,
+                        exceptions
+                    )
+                )
+                .map(trip => trip.trip_id)
+
         );
 
+        // STEP 9: Fetch routes.
 
-        // STEP 9: Fetch route details.
+        const activeTrips = trips.filter(
+            trip => activeTripIds.has(trip.trip_id)
+        );
 
         const routeIds = [
             ...new Set(
-                activeTrips.map(
-                    trip => trip.route_id
-                )
+                activeTrips.map(trip => trip.route_id)
             )
         ];
 
         const routes = await Route.find({
 
             feed_version: feedVersion,
-
-            route_id: {
-                $in: routeIds
-            }
+            route_id: { $in: routeIds }
 
         }).lean();
 
-
-        // Create route lookup map.
-
         const routeMap = new Map(
-            routes.map(
-                route => [
-                    route.route_id,
-                    route
-                ]
-            )
+            routes.map(route => [route.route_id, route])
         );
 
-
-        // STEP 10: Construct final journey response.
+        // ============================================
+        // STEP 10: CONSTRUCT JOURNEY RESPONSE
+        // ============================================
 
         const journeys = matchingJourneys
 
-            // Keep only active trips.
-
-            .filter(item =>
-                activeTripIds.has(item.tripId)
-            )
+            .filter(item => activeTripIds.has(item.tripId))
 
             .map(item => {
 
                 const trip = tripMap.get(item.tripId);
 
-                const route = trip
-                    ? routeMap.get(trip.route_id)
-                    : null;
+                if (!trip) return null;
 
+                const route = routeMap.get(trip.route_id);
 
-                if (!trip || !route) {
-                    return null;
-                }
+                if (!route) return null;
 
+                // Get ALL stop times for this trip.
+
+                const tripStopTimes =
+                    tripStopTimesMap.get(item.tripId) || [];
+
+                // Build the complete stop list.
+
+                const completeStops = tripStopTimes.map(stopTime => {
+
+                    const stop = allStopMap.get(stopTime.stop_id);
+
+                    return {
+
+                        stopId: stopTime.stop_id,
+
+                        stopName: stop?.stop_name || "Unknown Stop",
+
+                        stopSequence: Number(
+                            stopTime.stop_sequence
+                        ),
+
+                        arrivalTime: stopTime.arrival_time ?? null,
+
+                        departureTime: stopTime.departure_time ?? null,
+
+                        pickupType:
+                            parseGtfsInteger(
+                                stopTime.pickup_type
+                            ) ?? 0,
+
+                        dropOffType:
+                            parseGtfsInteger(
+                                stopTime.drop_off_type
+                            ) ?? 0
+
+                    };
+                });
+
+                // Return existing departure and arrival
+                // separately, along with the complete stops list.
 
                 return {
 
@@ -875,28 +901,19 @@ app.get("/api/v1/journeys/search", async (req, res) => {
                     route: {
 
                         routeId: route.route_id,
-
                         shortName: route.route_short_name,
-
                         longName: route.route_long_name,
-
                         routeType: route.route_type,
-
                         routeColor: route.route_color
 
                     },
 
-
                     departure: {
 
                         stopId: from.stop_id,
-
                         stopName: from.stop_name,
-
                         time: item.departure.departure_time,
-
-                        stopSequence:
-                            item.departure.stop_sequence,
+                        stopSequence: item.departure.stop_sequence,
 
                         pickupType:
                             parseGtfsInteger(
@@ -905,17 +922,12 @@ app.get("/api/v1/journeys/search", async (req, res) => {
 
                     },
 
-
                     arrival: {
 
                         stopId: to.stop_id,
-
                         stopName: to.stop_name,
-
                         time: item.arrival.arrival_time,
-
-                        stopSequence:
-                            item.arrival.stop_sequence,
+                        stopSequence: item.arrival.stop_sequence,
 
                         dropOffType:
                             parseGtfsInteger(
@@ -924,112 +936,245 @@ app.get("/api/v1/journeys/search", async (req, res) => {
 
                     },
 
+                    // NEW: Total number of stops in the complete trip.
+
+                    totalStops: completeStops.length,
+
+                    // NEW: Separate list containing ALL trip stops.
+
+                    stops: completeStops,
 
                     durationSeconds:
                         item.arrivalSeconds -
                         item.departureSeconds,
 
-
                     tripHeadsign: trip.trip_headsign
 
                 };
 
-            }).filter(Boolean).sort((a, b) =>
+            })
+
+            .filter(Boolean)
+
+            .sort((a, b) =>
                 a.durationSeconds - b.durationSeconds
             );
 
-        return res.status(200).json({
-            success: true,
-            message: journeys.length > 0
-                ? "Journeys found successfully"
+        return sendSuccess(res, {
+
+            message: journeys.length
+                ? "Journeys fetched successfully"
                 : "No journeys operate on the requested date",
+
             data: {
+
                 fromStop: from,
                 toStop: to,
                 date,
                 after,
+
                 totalResults: journeys.length,
+
                 journeys
+
             }
-        });
-
-
-    } catch (error) {
-
-        console.error("Journey Search Error:", error);
-
-        return res.status(500).json({
-
-            success: false,
-
-            message: "Internal server error"
 
         });
 
-    }
-
-});
-
-
-app.get("/api/v1/stops", async (req, res) => {
-    try {
-        const stops = await Stop.find({});
-
-        if (stops.length === 0) {
-            return res.status(500).json({
-                success: false,
-                message: "error fetching stops"
-            })
-        }
-
-        const FinalStops = stops.map((item) => ({
-    ...item.toObject(),
-    stop_name: item.stop_name
-        .replace(/\s*\*{0,3}\(?Demo Stop\)?\*{0,3}/gi, "")
-        .trim()
-}));
-
-        return res.status(200).json({
-            success: true,
-            message: "Stops fetched successfully",
-            stops: FinalStops
-        });
-
-    } catch (err) {
-        console.error(err);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal Server Error"
-        });
-    }
-});
-
+    })
+);
 
 // ============================================
-// 7. HEALTH CHECK
+// 13. STOPS API
+// ============================================
+
+app.get(
+    "/api/v1/stops",
+    asyncHandler(async (req, res) => {
+
+        const feedVersion = await getActiveFeedVersion();
+
+        const stops = await Stop.find({
+
+            feed_version: feedVersion
+
+        }).lean();
+
+        const finalStops = stops.map(stop => ({
+
+            ...stop,
+
+            stop_name: stop.stop_name
+                .replace(/Demo Stop/gi, "")
+                .trim()
+
+        }));
+
+        return sendSuccess(res, {
+
+            message: "Stops fetched successfully",
+
+            data: {
+
+                totalResults: finalStops.length,
+                stops: finalStops
+
+            }
+
+        });
+
+    })
+);
+
+// ============================================
+// 14. HEALTH CHECK
 // ============================================
 
 app.get("/health", (req, res) => {
 
-    return res.status(200).json({
+    const connected =
+        mongoose.connection.readyState === 1;
 
-        success: true,
+    return sendSuccess(res, {
 
-        database:
-            mongoose.connection.readyState === 1
+        status: connected ? 200 : 503,
+
+        message: connected
+            ? "Journey Search Service is healthy"
+            : "Database connection unavailable",
+
+        data: {
+
+            service: "Journey Search Service",
+
+            database: connected
                 ? "connected"
-                : "disconnected",
+                : "disconnected"
 
-        message: "Journey Search Service is healthy"
+        }
 
     });
 
 });
 
+// ============================================
+// 15. NOT FOUND HANDLER
+// ============================================
+
+app.use((req, res) => {
+
+    return sendError(res, {
+
+        status: 404,
+
+        code: "RESOURCE_NOT_FOUND",
+
+        message: `Route not found: ${req.method} ${req.originalUrl}`
+
+    });
+
+});
 
 // ============================================
-// 8. START SERVER
+// 16. CENTRALIZED ERROR HANDLER
+// ============================================
+
+app.use((err, req, res, next) => {
+
+    console.error("API Error:", {
+
+        method: req.method,
+        path: req.originalUrl,
+        error: err.message,
+
+        stack: process.env.NODE_ENV === "development"
+            ? err.stack
+            : undefined
+
+    });
+
+    if (res.headersSent) {
+        return next(err);
+    }
+
+    if (err instanceof ApiError) {
+
+        return sendError(res, {
+
+            status: err.status,
+            code: err.code,
+            message: err.message,
+            details: err.details
+
+        });
+
+    }
+
+    if (err instanceof mongoose.Error.ValidationError) {
+
+        return sendError(res, {
+
+            status: 400,
+
+            code: "DATABASE_VALIDATION_ERROR",
+
+            message: "Invalid data",
+
+            details: Object.values(err.errors).map(
+                item => ({
+
+                    field: item.path,
+                    message: item.message
+
+                })
+            )
+
+        });
+
+    }
+
+    if (err instanceof mongoose.Error.CastError) {
+
+        return sendError(res, {
+
+            status: 400,
+
+            code: "INVALID_RESOURCE_ID",
+
+            message: "Invalid resource identifier"
+
+        });
+
+    }
+
+    if (err.type === "entity.parse.failed") {
+
+        return sendError(res, {
+
+            status: 400,
+
+            code: "INVALID_JSON",
+
+            message: "Request body contains invalid JSON"
+
+        });
+
+    }
+
+    return sendError(res, {
+
+        status: 500,
+
+        code: "INTERNAL_SERVER_ERROR",
+
+        message: "An unexpected error occurred"
+
+    });
+
+});
+
+// ============================================
+// 17. START SERVER
 // ============================================
 
 const startServer = async () => {
@@ -1037,7 +1182,11 @@ const startServer = async () => {
     try {
 
         if (!process.env.MONGODB_URI) {
-            throw new Error("MONGODB_URI is not configured");
+
+            throw new Error(
+                "MONGODB_URI is not configured"
+            );
+
         }
 
         await connectDB();
@@ -1045,7 +1194,7 @@ const startServer = async () => {
         app.listen(PORT, () => {
 
             console.log(
-                `Journey Search Service is running on port ${PORT}`
+                `Journey Search Service running on port ${PORT}`
             );
 
         });

@@ -1,0 +1,2 @@
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+BHL_DEMO_DAILY,1,1,1,1,1,1,1,20261026,20271031

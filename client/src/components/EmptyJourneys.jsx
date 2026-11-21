@@ -159,7 +159,7 @@ export default function EmptyJourneys({
         {variant === "noResults" ? <MissingBus /> : <Bus />}
       </svg>
 
-      <h3 className="mt-2 font-sora text-lg font-bold text-primary dark:text-white">
+      <h3 className="mt-2 font-sora text-lg font-bold text-primary ">
         {title ?? content.title}
       </h3>
       <p className="mt-1.5 max-w-[250px] text-sm leading-relaxed text-neutral dark:text-neutral-light">

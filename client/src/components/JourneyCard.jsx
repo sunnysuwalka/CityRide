@@ -24,34 +24,19 @@ export default function JourneyCard({
   onClick,
   className = "",
 }) {
-  const interactive = typeof onClick === "function";
+
 
   return (
     // Wrapper carries the shadow: box-shadow would be clipped by the notch mask
     <div
-      className={`w-full drop-shadow-[0_4px_20px_rgba(11,45,107,0.10)] ${
-        interactive
-          ? "cursor-pointer transition-transform duration-250 hover:-translate-y-0.5"
-          : ""
-      } ${className} opacity-90`}
-      {...(interactive && {
-        role: "button",
-        tabIndex: 0,
-        onClick,
-        onKeyDown: (e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onClick(e);
-          }
-        },
-      })}
+      onClick={onClick}
+      className={`w-full drop-shadow-[0_4px_20px_rgba(11,45,107,0.10)]  ${className} opacity-90`}
     >
       <article
-        style={maskStyle}
-        className="overflow-hidden bg-surface-white font-inter text-primary t dark:text-white"
+        className="overflow-hidden bg-surface-white font-inter text-primary dark:text-white rounded-md"
       >
         {/* Header band */}
-        <header className="flex h-12 items-center justify-between gap-3 px-4 bg-primary-dark text-white sm:px-5 ">
+        <header className="flex h-fit py-2 items-center justify-between gap-3 px-4 bg-primary text-white sm:px-5 ">
           <h3 className="flex items-center gap-2 font-sora text-sm">
             <LuBus className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span className="">{headsign}</span>
@@ -68,7 +53,7 @@ export default function JourneyCard({
         <div className="grid bg-surface-white border border-t-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-4 pb-5 pt-4 sm:gap-3 sm:px-5">
           {/* Departure */}
           <div className="min-w-0">
-            <p className="font-sora text-primary text-xl font-bold leading-none tabular-nums sm:text-2xl">
+            <p className="font-inter text-primary text-lg leading-none tabular-nums sm:text-2xl">
               {departureTime}
             </p>
             <p className="mt-1.5 break-words text-xs text-primary-dark/80 sm:text-sm ">
@@ -78,16 +63,16 @@ export default function JourneyCard({
 
           {/* Duration + connector */}
           <div className="flex min-w-16 flex-col items-center gap-1.5 sm:min-w-20">
-            <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-pill bg-surface px-2 py-1 text-2xs font-semibold text-accent-light sm:px-2.5 sm:text-xs">
+            <span className="inline-flex text-primary items-center gap-1 whitespace-nowrap rounded-pill bg-surface-muted px-2 py-1 text-2xs font-semibold sm:px-2.5 sm:text-xs">
               <LuClock className="h-3 w-3 sm:h-3.5 sm:w-3.5" aria-hidden="true" />
               {duration}
             </span>
-            <span className="h-px w-full bg-accent-light/60" />
+            <span className="h-px w-full bg-primary-light" />
           </div>
 
           {/* Arrival */}
           <div className="min-w-0 text-right">
-            <p className="font-sora text-primary text-xl font-bold leading-none tabular-nums sm:text-2xl">
+            <p className="font-inter text-primary text-lg leading-none tabular-nums ">
               {arrivalTime}
             </p>
             <p className="mt-1.5 break-words text-xs text-primary-dark/80 sm:text-sm">
